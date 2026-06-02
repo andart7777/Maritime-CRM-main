@@ -1,4 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Query, Header
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Depends,
+    BackgroundTasks,
+    Query,
+    Header,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
@@ -14,18 +22,29 @@ from sendgrid.helpers.mail import Mail
 import os
 from dotenv import load_dotenv
 from enum import Enum
+import logging
+import time
+from prometheus_fastapi_instrumentator import Instrumentator
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
+
+logger = logging.getLogger("crm-api")
+
+
 # Settings
 class Settings(BaseSettings):
-    mongo_url: str = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-    db_name: str = os.environ.get('DB_NAME', 'Maritime-CRM')
-    jwt_secret: str = os.environ.get('JWT_SECRET', 'secret')
-    jwt_algorithm: str = os.environ.get('JWT_ALGORITHM', 'HS256')
-    jwt_expiration_hours: int = int(os.environ.get('JWT_EXPIRATION_HOURS', '24'))
-    sendgrid_api_key: str = os.environ.get('SENDGRID_API_KEY', '')
-    sender_email: str = os.environ.get('SENDER_EMAIL', '')
+    mongo_url: str = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    db_name: str = os.environ.get("DB_NAME", "Maritime-CRM")
+    jwt_secret: str = os.environ.get("JWT_SECRET", "secret")
+    jwt_algorithm: str = os.environ.get("JWT_ALGORITHM", "HS256")
+    jwt_expiration_hours: int = int(os.environ.get("JWT_EXPIRATION_HOURS", "24"))
+    sendgrid_api_key: str = os.environ.get("SENDGRID_API_KEY", "")
+    sender_email: str = os.environ.get("SENDER_EMAIL", "")
+
 
 settings = Settings()
 
@@ -46,16 +65,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Unhandled error during request: %s %s", request.method, request.url.path
+        )
+        raise
+
+    duration = round(time.time() - start_time, 4)
+
+    logger.info(
+        "%s %s %s %.4fs",
+        request.method,
+        request.url.path,
+        response.status_code,
+        duration,
+    )
+
+    return response
+
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+
 # Enums
 class UserRole(str, Enum):
     ADMIN = "admin"
     MANAGER = "manager"
     HR = "hr"
 
+
 class SailorStatus(str, Enum):
     AVAILABLE = "available"
     ON_VOYAGE = "on_voyage"
     NOT_AVAILABLE = "not_available"
+
 
 class VacancyStatus(str, Enum):
     OPEN = "open"
@@ -63,11 +113,13 @@ class VacancyStatus(str, Enum):
     CLOSED = "closed"
     AT_SEA = "at_sea"
 
+
 class ContractStatus(str, Enum):
     PREPARATION = "preparation"
     FLIGHT = "flight"
     ON_BOARD = "on_board"
     COMPLETED = "completed"
+
 
 class PipelineStage(str, Enum):
     CONTACT = "contact"
@@ -77,12 +129,14 @@ class PipelineStage(str, Enum):
     JOINED = "joined"
     COMPLETED = "completed"
 
+
 class VesselType(str, Enum):
     TANKER = "tanker"
     BULK_CARRIER = "bulk_carrier"
     CONTAINER = "container"
     PASSENGER = "passenger"
     GENERAL_CARGO = "general_cargo"
+
 
 # Pydantic Models
 class UserCreate(BaseModel):
@@ -91,9 +145,11 @@ class UserCreate(BaseModel):
     full_name: str
     role: UserRole = UserRole.MANAGER
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserResponse(BaseModel):
     id: str
@@ -102,10 +158,12 @@ class UserResponse(BaseModel):
     role: str
     created_at: datetime
 
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
 
 class Document(BaseModel):
     doc_type: str
@@ -113,6 +171,7 @@ class Document(BaseModel):
     issue_date: datetime
     expiry_date: datetime
     issuing_authority: Optional[str] = None
+
 
 class SeaExperience(BaseModel):
     vessel_name: str
@@ -122,6 +181,7 @@ class SeaExperience(BaseModel):
     position: str
     start_date: datetime
     end_date: Optional[datetime] = None
+
 
 class SailorCreate(BaseModel):
     full_name: str
@@ -141,6 +201,7 @@ class SailorCreate(BaseModel):
     notes: Optional[str] = None
     user_id: Optional[str] = None
 
+
 class SailorUpdate(BaseModel):
     full_name: Optional[str] = None
     full_name_en: Optional[str] = None
@@ -159,17 +220,20 @@ class SailorUpdate(BaseModel):
     notes: Optional[str] = None
     user_id: Optional[str] = None
 
+
 class CompanyContact(BaseModel):
     name: str
     position: str
     email: EmailStr
     phone: Optional[str] = None
 
+
 class SalaryScale(BaseModel):
     position: str
     min_salary: int
     max_salary: int
     currency: str = "USD"
+
 
 class CompanyCreate(BaseModel):
     name: str
@@ -180,6 +244,7 @@ class CompanyCreate(BaseModel):
     salary_scales: List[SalaryScale] = []
     notes: Optional[str] = None
 
+
 class CompanyUpdate(BaseModel):
     name: Optional[str] = None
     flag: Optional[str] = None
@@ -188,6 +253,7 @@ class CompanyUpdate(BaseModel):
     contacts: Optional[List[CompanyContact]] = None
     salary_scales: Optional[List[SalaryScale]] = None
     notes: Optional[str] = None
+
 
 class VacancyCreate(BaseModel):
     company_id: str
@@ -207,6 +273,7 @@ class VacancyCreate(BaseModel):
     notes: Optional[str] = None
     user_id: Optional[str] = None
 
+
 class VacancyUpdate(BaseModel):
     company_id: Optional[str] = None
     position: Optional[str] = None
@@ -225,6 +292,7 @@ class VacancyUpdate(BaseModel):
     notes: Optional[str] = None
     user_id: Optional[str] = None
 
+
 class ContractCreate(BaseModel):
     sailor_id: str
     vacancy_id: str
@@ -237,6 +305,7 @@ class ContractCreate(BaseModel):
     notes: Optional[str] = None
     user_id: Optional[str] = None
 
+
 class ContractUpdate(BaseModel):
     sign_date: Optional[datetime] = None
     start_date: Optional[datetime] = None
@@ -246,6 +315,7 @@ class ContractUpdate(BaseModel):
     currency: Optional[str] = None
     notes: Optional[str] = None
 
+
 class PipelineCandidate(BaseModel):
     sailor_id: str
     vacancy_id: str
@@ -253,28 +323,30 @@ class PipelineCandidate(BaseModel):
     interview_link: Optional[str] = None
     notes: Optional[str] = None
 
+
 class PipelineUpdate(BaseModel):
     stage: Optional[PipelineStage] = None
     interview_link: Optional[str] = None
     notes: Optional[str] = None
+
 
 # Helper functions
 def serialize_doc(doc: dict) -> dict:
     """Recursively serialize MongoDB document, converting ObjectId to str"""
     if doc is None:
         return None
-    
+
     if isinstance(doc, dict):
         result = {}
         for key, value in doc.items():
-            if key == '_id':
-                result['id'] = str(value)
+            if key == "_id":
+                result["id"] = str(value)
             else:
                 result[key] = serialize_doc(value)
         return result
     elif isinstance(doc, list):
         return [serialize_doc(item) for item in doc]
-    elif hasattr(doc, 'id'):  # Pydantic with id
+    elif hasattr(doc, "id"):  # Pydantic with id
         return doc
     else:
         # Handle ObjectId directly
@@ -283,8 +355,10 @@ def serialize_doc(doc: dict) -> dict:
         except:
             return doc
 
+
 def serialize_docs(docs: list) -> list:
     return [serialize_doc(doc) for doc in docs if doc is not None]
+
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
@@ -292,19 +366,25 @@ def create_access_token(data: dict) -> str:
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+
 security = HTTPBearer()
+
 
 def get_current_user(token: str = Depends(security)) -> dict:
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        payload = jwt.decode(token.credentials, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            token.credentials, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -315,6 +395,7 @@ def get_current_user(token: str = Depends(security)) -> dict:
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+
 def send_email_notification(to_email: str, subject: str, html_content: str):
     if not settings.sendgrid_api_key:
         print(f"SendGrid not configured. Email to {to_email}: {subject}")
@@ -324,7 +405,7 @@ def send_email_notification(to_email: str, subject: str, html_content: str):
             from_email=settings.sender_email,
             to_emails=to_email,
             subject=subject,
-            html_content=html_content
+            html_content=html_content,
         )
         sg = SendGridAPIClient(settings.sendgrid_api_key)
         response = sg.send(message)
@@ -332,6 +413,7 @@ def send_email_notification(to_email: str, subject: str, html_content: str):
     except Exception as e:
         print(f"Email error: {e}")
         return False
+
 
 # Auth endpoints
 @app.post("/api/auth/register", response_model=TokenResponse)
@@ -347,38 +429,48 @@ async def register(user: UserCreate):
         del user_dict["_id"]
     del user_dict["password"]
     token = create_access_token({"sub": user_dict["id"]})
-    return TokenResponse(
-        access_token=token,
-        user=UserResponse(**user_dict)
-    )
+    return TokenResponse(access_token=token, user=UserResponse(**user_dict))
+
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
     user = db.users.find_one({"email": credentials.email})
-    if not user or not verify_password(credentials.password, user["password"]):
+
+    if not user:
+        logger.warning(
+            "Failed login attempt: user not found, email=%s", credentials.email
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    user_data = serialize_doc(user)
-    del user_data["password"]
-    token = create_access_token({"sub": user_data["id"]})
-    return TokenResponse(
-        access_token=token,
-        user=UserResponse(**user_data)
-    )
+
+    if not verify_password(credentials.password, user["password"]):
+        logger.warning(
+            "Failed login attempt: wrong password, email=%s", credentials.email
+        )
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token = create_access_token(data={"sub": str(user["_id"])})
+
+    logger.info("User logged in: email=%s", user["email"])
+
+    return TokenResponse(access_token=access_token, user=serialize_doc(user))
+
 
 @app.get("/api/auth/me")
-async def get_me(current_user = Depends(get_current_user)):
+async def get_me(current_user=Depends(get_current_user)):
     return current_user
+
 
 # Users management (admin only)
 @app.get("/api/users")
-async def get_users(current_user = Depends(get_current_user)):
+async def get_users(current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     users = list(db.users.find({}, {"password": 0}))
     return serialize_docs(users)
 
+
 @app.post("/api/users")
-async def create_user(user: UserCreate, current_user = Depends(get_current_user)):
+async def create_user(user: UserCreate, current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     if db.users.find_one({"email": user.email}):
@@ -390,8 +482,9 @@ async def create_user(user: UserCreate, current_user = Depends(get_current_user)
     created_user = db.users.find_one({"_id": result.inserted_id}, {"password": 0})
     return serialize_doc(created_user)
 
+
 @app.delete("/api/users/{user_id}")
-async def delete_user(user_id: str, current_user = Depends(get_current_user)):
+async def delete_user(user_id: str, current_user=Depends(get_current_user)):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     result = db.users.delete_one({"_id": ObjectId(user_id)})
@@ -399,13 +492,14 @@ async def delete_user(user_id: str, current_user = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "User deleted"}
 
+
 # Sailors endpoints
 @app.get("/api/sailors")
 async def get_sailors(
     status: Optional[SailorStatus] = None,
     position: Optional[str] = None,
     search: Optional[str] = None,
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     query = {"user_id": current_user["id"]}
     if status:
@@ -413,103 +507,154 @@ async def get_sailors(
     if position:
         query["position"] = {"$regex": position, "$options": "i"}
     if search:
-        or_query = {"$or": [
-            {"full_name": {"$regex": search, "$options": "i"}},
-            {"email": {"$regex": search, "$options": "i"}},
-            {"phone": {"$regex": search, "$options": "i"}}
-        ]}
+        or_query = {
+            "$or": [
+                {"full_name": {"$regex": search, "$options": "i"}},
+                {"email": {"$regex": search, "$options": "i"}},
+                {"phone": {"$regex": search, "$options": "i"}},
+            ]
+        }
         query = {"$and": [query, or_query]}
     sailors = list(db.sailors.find(query))
     return serialize_docs(sailors)
 
+
 @app.get("/api/sailors/{sailor_id}")
-async def get_sailor(sailor_id: str, current_user = Depends(get_current_user)):
+async def get_sailor(sailor_id: str, current_user=Depends(get_current_user)):
     sailor = db.sailors.find_one({"_id": ObjectId(sailor_id)})
     if not sailor:
         raise HTTPException(status_code=404, detail="Sailor not found")
     return serialize_doc(sailor)
 
+
 @app.post("/api/sailors")
-async def create_sailor(sailor: SailorCreate, current_user = Depends(get_current_user)):
+async def create_sailor(sailor: SailorCreate, current_user=Depends(get_current_user)):
     sailor_dict = sailor.model_dump()
     if not sailor_dict.get("user_id"):
         sailor_dict["user_id"] = current_user["id"]
     sailor_dict["created_at"] = datetime.now(timezone.utc)
-    sailor_dict["documents"] = [d.model_dump() if hasattr(d, 'model_dump') else d for d in sailor_dict.get("documents", [])]
-    sailor_dict["experience"] = [e.model_dump() if hasattr(e, 'model_dump') else e for e in sailor_dict.get("experience", [])]
+    sailor_dict["documents"] = [
+        d.model_dump() if hasattr(d, "model_dump") else d
+        for d in sailor_dict.get("documents", [])
+    ]
+    sailor_dict["experience"] = [
+        e.model_dump() if hasattr(e, "model_dump") else e
+        for e in sailor_dict.get("experience", [])
+    ]
     result = db.sailors.insert_one(sailor_dict)
+    logger.info("Sailor/freelancer created: full_name=%s", sailor_dict.get("full_name"))
     sailor_dict["id"] = str(result.inserted_id)
     return sailor_dict
 
+
 @app.put("/api/sailors/{sailor_id}")
-async def update_sailor(sailor_id: str, sailor: SailorUpdate, current_user = Depends(get_current_user)):
+async def update_sailor(
+    sailor_id: str, sailor: SailorUpdate, current_user=Depends(get_current_user)
+):
     update_data = {k: v for k, v in sailor.model_dump().items() if v is not None}
     if "documents" in update_data:
-        update_data["documents"] = [d if isinstance(d, dict) else d.model_dump() for d in update_data["documents"]]
+        update_data["documents"] = [
+            d if isinstance(d, dict) else d.model_dump()
+            for d in update_data["documents"]
+        ]
     if "experience" in update_data:
-        update_data["experience"] = [e if isinstance(e, dict) else e.model_dump() for e in update_data["experience"]]
+        update_data["experience"] = [
+            e if isinstance(e, dict) else e.model_dump()
+            for e in update_data["experience"]
+        ]
     update_data["updated_at"] = datetime.now(timezone.utc)
     result = db.sailors.update_one({"_id": ObjectId(sailor_id)}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Sailor not found")
     return await get_sailor(sailor_id, current_user)
 
+
 @app.delete("/api/sailors/{sailor_id}")
-async def delete_sailor(sailor_id: str, current_user = Depends(get_current_user)):
+async def delete_sailor(sailor_id: str, current_user=Depends(get_current_user)):
     result = db.sailors.delete_one({"_id": ObjectId(sailor_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Sailor not found")
     return {"message": "Sailor deleted"}
 
+
 # Companies endpoints
 @app.get("/api/companies")
-async def get_companies(search: Optional[str] = None, current_user = Depends(get_current_user)):
+async def get_companies(
+    search: Optional[str] = None, current_user=Depends(get_current_user)
+):
     query = {"user_id": current_user["id"]}
     if search:
-        or_query = {"$or": [
-            {"name": {"$regex": search, "$options": "i"}},
-            {"country": {"$regex": search, "$options": "i"}}
-        ]}
+        or_query = {
+            "$or": [
+                {"name": {"$regex": search, "$options": "i"}},
+                {"country": {"$regex": search, "$options": "i"}},
+            ]
+        }
         query = {"$and": [query, or_query]}
     companies = list(db.companies.find(query))
     return serialize_docs(companies)
 
+
 @app.get("/api/companies/{company_id}")
-async def get_company(company_id: str, current_user = Depends(get_current_user)):
+async def get_company(company_id: str, current_user=Depends(get_current_user)):
     company = db.companies.find_one({"_id": ObjectId(company_id)})
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
     return serialize_doc(company)
 
+
 @app.post("/api/companies")
-async def create_company(company: CompanyCreate, current_user = Depends(get_current_user)):
+async def create_company(
+    company: CompanyCreate, current_user=Depends(get_current_user)
+):
     company_dict = company.model_dump()
+    company_dict["user_id"] = current_user["id"]
     company_dict["created_at"] = datetime.now(timezone.utc)
-    company_dict["contacts"] = [c if isinstance(c, dict) else c.model_dump() for c in company_dict.get("contacts", [])]
-    company_dict["salary_scales"] = [s if isinstance(s, dict) else s.model_dump() for s in company_dict.get("salary_scales", [])]
+    company_dict["contacts"] = [
+        c if isinstance(c, dict) else c.model_dump()
+        for c in company_dict.get("contacts", [])
+    ]
+    company_dict["salary_scales"] = [
+        s if isinstance(s, dict) else s.model_dump()
+        for s in company_dict.get("salary_scales", [])
+    ]
     result = db.companies.insert_one(company_dict)
+    logger.info("Company created: name=%s", company_dict.get("name"))
     company_dict["id"] = str(result.inserted_id)
     return company_dict
 
+
 @app.put("/api/companies/{company_id}")
-async def update_company(company_id: str, company: CompanyUpdate, current_user = Depends(get_current_user)):
+async def update_company(
+    company_id: str, company: CompanyUpdate, current_user=Depends(get_current_user)
+):
     update_data = {k: v for k, v in company.model_dump().items() if v is not None}
     if "contacts" in update_data:
-        update_data["contacts"] = [c if isinstance(c, dict) else c.model_dump() for c in update_data["contacts"]]
+        update_data["contacts"] = [
+            c if isinstance(c, dict) else c.model_dump()
+            for c in update_data["contacts"]
+        ]
     if "salary_scales" in update_data:
-        update_data["salary_scales"] = [s if isinstance(s, dict) else s.model_dump() for s in update_data["salary_scales"]]
+        update_data["salary_scales"] = [
+            s if isinstance(s, dict) else s.model_dump()
+            for s in update_data["salary_scales"]
+        ]
     update_data["updated_at"] = datetime.now(timezone.utc)
-    result = db.companies.update_one({"_id": ObjectId(company_id)}, {"$set": update_data})
+    result = db.companies.update_one(
+        {"_id": ObjectId(company_id)}, {"$set": update_data}
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Company not found")
     return await get_company(company_id, current_user)
 
+
 @app.delete("/api/companies/{company_id}")
-async def delete_company(company_id: str, current_user = Depends(get_current_user)):
+async def delete_company(company_id: str, current_user=Depends(get_current_user)):
     result = db.companies.delete_one({"_id": ObjectId(company_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Company not found")
     return {"message": "Company deleted"}
+
 
 # Vacancies endpoints
 @app.get("/api/vacancies")
@@ -517,7 +662,7 @@ async def get_vacancies(
     status: Optional[VacancyStatus] = None,
     company_id: Optional[str] = None,
     vessel_type: Optional[VesselType] = None,
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     query = {"user_id": current_user["id"]}
     if status:
@@ -529,43 +674,57 @@ async def get_vacancies(
     vacancies = list(db.vacancies.find(query))
     return serialize_docs(vacancies)
 
+
 @app.get("/api/vacancies/{vacancy_id}")
-async def get_vacancy(vacancy_id: str, current_user = Depends(get_current_user)):
+async def get_vacancy(vacancy_id: str, current_user=Depends(get_current_user)):
     vacancy = db.vacancies.find_one({"_id": ObjectId(vacancy_id)})
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
     return serialize_doc(vacancy)
 
+
 @app.post("/api/vacancies")
-async def create_vacancy(vacancy: VacancyCreate, current_user = Depends(get_current_user)):
+async def create_vacancy(
+    vacancy: VacancyCreate, current_user=Depends(get_current_user)
+):
     vacancy_dict = vacancy.model_dump()
+    if not vacancy_dict.get("user_id"):
+        vacancy_dict["user_id"] = current_user["id"]
     vacancy_dict["created_at"] = datetime.now(timezone.utc)
     result = db.vacancies.insert_one(vacancy_dict)
+    logger.info("Vacancy/project created: title=%s", vacancy_dict.get("title"))
     vacancy_dict["id"] = str(result.inserted_id)
     return vacancy_dict
 
+
 @app.put("/api/vacancies/{vacancy_id}")
-async def update_vacancy(vacancy_id: str, vacancy: VacancyUpdate, current_user = Depends(get_current_user)):
+async def update_vacancy(
+    vacancy_id: str, vacancy: VacancyUpdate, current_user=Depends(get_current_user)
+):
     update_data = {k: v for k, v in vacancy.model_dump().items() if v is not None}
     update_data["updated_at"] = datetime.now(timezone.utc)
-    result = db.vacancies.update_one({"_id": ObjectId(vacancy_id)}, {"$set": update_data})
+    result = db.vacancies.update_one(
+        {"_id": ObjectId(vacancy_id)}, {"$set": update_data}
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Vacancy not found")
     return await get_vacancy(vacancy_id, current_user)
 
+
 @app.delete("/api/vacancies/{vacancy_id}")
-async def delete_vacancy(vacancy_id: str, current_user = Depends(get_current_user)):
+async def delete_vacancy(vacancy_id: str, current_user=Depends(get_current_user)):
     result = db.vacancies.delete_one({"_id": ObjectId(vacancy_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Vacancy not found")
     return {"message": "Vacancy deleted"}
+
 
 # Contracts endpoints
 @app.get("/api/contracts")
 async def get_contracts(
     status: Optional[ContractStatus] = None,
     sailor_id: Optional[str] = None,
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     query = {"user_id": current_user["id"]}
     if status:
@@ -575,43 +734,57 @@ async def get_contracts(
     contracts = list(db.contracts.find(query))
     return serialize_docs(contracts)
 
+
 @app.get("/api/contracts/{contract_id}")
-async def get_contract(contract_id: str, current_user = Depends(get_current_user)):
+async def get_contract(contract_id: str, current_user=Depends(get_current_user)):
     contract = db.contracts.find_one({"_id": ObjectId(contract_id)})
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
     return serialize_doc(contract)
 
+
 @app.post("/api/contracts")
-async def create_contract(contract: ContractCreate, current_user = Depends(get_current_user)):
+async def create_contract(
+    contract: ContractCreate, current_user=Depends(get_current_user)
+):
     contract_dict = contract.model_dump()
+    if not contract_dict.get("user_id"):
+        contract_dict["user_id"] = current_user["id"]
     contract_dict["created_at"] = datetime.now(timezone.utc)
     result = db.contracts.insert_one(contract_dict)
+    logger.info("Contract created: id=%s", str(result.inserted_id))
     contract_dict["id"] = str(result.inserted_id)
     return contract_dict
 
+
 @app.put("/api/contracts/{contract_id}")
-async def update_contract(contract_id: str, contract: ContractUpdate, current_user = Depends(get_current_user)):
+async def update_contract(
+    contract_id: str, contract: ContractUpdate, current_user=Depends(get_current_user)
+):
     update_data = {k: v for k, v in contract.model_dump().items() if v is not None}
     update_data["updated_at"] = datetime.now(timezone.utc)
-    result = db.contracts.update_one({"_id": ObjectId(contract_id)}, {"$set": update_data})
+    result = db.contracts.update_one(
+        {"_id": ObjectId(contract_id)}, {"$set": update_data}
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Contract not found")
     return await get_contract(contract_id, current_user)
 
+
 @app.delete("/api/contracts/{contract_id}")
-async def delete_contract(contract_id: str, current_user = Depends(get_current_user)):
+async def delete_contract(contract_id: str, current_user=Depends(get_current_user)):
     result = db.contracts.delete_one({"_id": ObjectId(contract_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Contract not found")
     return {"message": "Contract deleted"}
+
 
 # Pipeline endpoints
 @app.get("/api/pipeline")
 async def get_pipeline(
     vacancy_id: Optional[str] = None,
     stage: Optional[PipelineStage] = None,
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     query = {"user_id": current_user["id"]}
     if vacancy_id:
@@ -621,77 +794,126 @@ async def get_pipeline(
     candidates = list(db.pipeline.find(query).sort("order", 1))
     return serialize_docs(candidates)
 
+
 @app.post("/api/pipeline")
-async def add_to_pipeline(candidate: PipelineCandidate, current_user = Depends(get_current_user)):
+async def add_to_pipeline(
+    candidate: PipelineCandidate, current_user=Depends(get_current_user)
+):
     candidate_dict = candidate.model_dump()
+    candidate_dict["user_id"] = current_user["id"]
     candidate_dict["created_at"] = datetime.now(timezone.utc)
     result = db.pipeline.insert_one(candidate_dict)
     candidate_dict["id"] = str(result.inserted_id)
     return serialize_doc(candidate_dict)
 
+
 @app.put("/api/pipeline/{pipeline_id}")
-async def update_pipeline(pipeline_id: str, update: PipelineUpdate, current_user = Depends(get_current_user)):
+async def update_pipeline(
+    pipeline_id: str, update: PipelineUpdate, current_user=Depends(get_current_user)
+):
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     update_data["updated_at"] = datetime.now(timezone.utc)
-    result = db.pipeline.update_one({"_id": ObjectId(pipeline_id)}, {"$set": update_data})
+    result = db.pipeline.update_one(
+        {"_id": ObjectId(pipeline_id)}, {"$set": update_data}
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Pipeline entry not found")
     entry = db.pipeline.find_one({"_id": ObjectId(pipeline_id)})
     return serialize_doc(entry)
 
+
 @app.delete("/api/pipeline/{pipeline_id}")
-async def remove_from_pipeline(pipeline_id: str, current_user = Depends(get_current_user)):
+async def remove_from_pipeline(
+    pipeline_id: str, current_user=Depends(get_current_user)
+):
     result = db.pipeline.delete_one({"_id": ObjectId(pipeline_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Pipeline entry not found")
     return {"message": "Removed from pipeline"}
 
+
 # Smart matching
 @app.get("/api/matching/{vacancy_id}")
 async def find_candidates(vacancy_id: str, authorization: Optional[str] = None):
-    get_current_user(authorization)
+    current_user = Depends(get_current_user)
     vacancy = db.vacancies.find_one({"_id": ObjectId(vacancy_id)})
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
-    
+
     query = {
         "status": SailorStatus.AVAILABLE.value,
-        "position": {"$regex": vacancy.get("position", ""), "$options": "i"}
+        "position": {"$regex": vacancy.get("position", ""), "$options": "i"},
     }
-    
+
     vessel_type = vacancy.get("vessel_type")
     if vessel_type:
         query["experience.vessel_type"] = vessel_type
-    
+
     sailors = list(db.sailors.find(query).sort("rating", -1).limit(20))
     return serialize_docs(sailors)
 
+
 # Dashboard stats
 @app.get("/api/dashboard/summary")
-async def get_dashboard_summary(current_user = Depends(get_current_user)):
+async def get_dashboard_summary(current_user=Depends(get_current_user)):
     user_match = {"user_id": current_user["id"]}
-    
+
     # Stats
     stats = {
         "total_sailors": db.sailors.count_documents(user_match),
-        "available_sailors": db.sailors.count_documents({"$and": [user_match, {"status": SailorStatus.AVAILABLE.value}]}),
-        "open_vacancies": db.vacancies.count_documents({"$and": [user_match, {"status": VacancyStatus.OPEN.value}]}),
-        "active_contracts": db.contracts.count_documents({"$and": [user_match, {"status": {"$in": [ContractStatus.ON_BOARD.value, ContractStatus.PREPARATION.value]}}]}),
+        "available_sailors": db.sailors.count_documents(
+            {"$and": [user_match, {"status": SailorStatus.AVAILABLE.value}]}
+        ),
+        "open_vacancies": db.vacancies.count_documents(
+            {"$and": [user_match, {"status": VacancyStatus.OPEN.value}]}
+        ),
+        "active_contracts": db.contracts.count_documents(
+            {
+                "$and": [
+                    user_match,
+                    {
+                        "status": {
+                            "$in": [
+                                ContractStatus.ON_BOARD.value,
+                                ContractStatus.PREPARATION.value,
+                            ]
+                        }
+                    },
+                ]
+            }
+        ),
         "total_companies": db.companies.count_documents(user_match),
     }
-    
+
     # Pipeline by stage
-    pipeline_by_stage = dict(db.pipeline.aggregate([
-        {"$match": user_match},
-        {"$group": {"_id": "$stage", "count": {"$sum": 1}}},
-        {"$sort": {"_id": 1}}
-    ]))
-    
+    pipeline_by_stage = dict(
+        db.pipeline.aggregate(
+            [
+                {"$match": user_match},
+                {"$group": {"_id": "$stage", "count": {"$sum": 1}}},
+                {"$sort": {"_id": 1}},
+            ]
+        )
+    )
+
     # Recent sailors (last 30 days)
-    recent_sailors = list(db.sailors.find({
-        "$and": [user_match, {"created_at": {"$gte": datetime.now(timezone.utc) - timedelta(days=30)}}]
-    }).sort("created_at", -1).limit(5))
-    
+    recent_sailors = list(
+        db.sailors.find(
+            {
+                "$and": [
+                    user_match,
+                    {
+                        "created_at": {
+                            "$gte": datetime.now(timezone.utc) - timedelta(days=30)
+                        }
+                    },
+                ]
+            }
+        )
+        .sort("created_at", -1)
+        .limit(5)
+    )
+
     # Expiring documents (next 90 days, user sailors only)
     three_months = datetime.now(timezone.utc) + timedelta(days=90)
     expiring_docs = []
@@ -703,45 +925,62 @@ async def get_dashboard_summary(current_user = Depends(get_current_user)):
                 if isinstance(expiry, str):
                     expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
                 if expiry <= three_months:
-                    expiring_docs.append({
-                        "sailor_id": sailor_data["id"],
-                        "sailor_name": sailor_data["full_name"],
-                        "document_type": doc["doc_type"],
-                        "expiry_date": expiry.isoformat(),
-                        "days_remaining": (expiry - datetime.now(timezone.utc)).days
-                    })
+                    expiring_docs.append(
+                        {
+                            "sailor_id": sailor_data["id"],
+                            "sailor_name": sailor_data["full_name"],
+                            "document_type": doc["doc_type"],
+                            "expiry_date": expiry.isoformat(),
+                            "days_remaining": (
+                                expiry - datetime.now(timezone.utc)
+                            ).days,
+                        }
+                    )
     expiring_docs.sort(key=lambda x: x["days_remaining"])
-    
+
     # Upcoming rotations (user contracts)
     one_month = datetime.now(timezone.utc) + timedelta(days=30)
     upcoming = []
-    for contract in db.contracts.find({"$and": [user_match, {"status": ContractStatus.ON_BOARD.value, "end_date": {"$lte": one_month}}]}):
+    for contract in db.contracts.find(
+        {
+            "$and": [
+                user_match,
+                {
+                    "status": ContractStatus.ON_BOARD.value,
+                    "end_date": {"$lte": one_month},
+                },
+            ]
+        }
+    ):
         c_data = serialize_doc(contract)
         sailor = db.sailors.find_one({"_id": ObjectId(c_data["sailor_id"])})
         vacancy = db.vacancies.find_one({"_id": ObjectId(c_data["vacancy_id"])})
-        upcoming.append({
-            "contract_id": c_data["id"],
-            "sailor_name": sailor["full_name"] if sailor else "Unknown",
-            "vessel_name": vacancy["vessel_name"] if vacancy else "Unknown",
-            "end_date": c_data["end_date"].isoformat()
-        })
-    
+        upcoming.append(
+            {
+                "contract_id": c_data["id"],
+                "sailor_name": sailor["full_name"] if sailor else "Unknown",
+                "vessel_name": vacancy["vessel_name"] if vacancy else "Unknown",
+                "end_date": c_data["end_date"].isoformat(),
+            }
+        )
+
     return {
         "stats": stats,
         "pipeline_by_stage": pipeline_by_stage,
         "recent_sailors": serialize_docs(recent_sailors),
         "expiring_documents": expiring_docs[:10],  # top 10
-        "upcoming_rotations": upcoming
+        "upcoming_rotations": upcoming,
     }
 
+
 @app.get("/api/dashboard/expiring-documents")
-async def get_expiring_documents(current_user = Depends(get_current_user)):
-    
+async def get_expiring_documents(current_user=Depends(get_current_user)):
+
     three_months_from_now = datetime.now(timezone.utc) + timedelta(days=90)
-    
+
     sailors = list(db.sailors.find({}))
     expiring = []
-    
+
     for sailor in sailors:
         sailor_data = serialize_doc(sailor)
         for doc in sailor_data.get("documents", []):
@@ -750,41 +989,63 @@ async def get_expiring_documents(current_user = Depends(get_current_user)):
                 if isinstance(expiry, str):
                     expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
                 if expiry <= three_months_from_now:
-                    expiring.append({
-                        "sailor_id": sailor_data["id"],
-                        "sailor_name": sailor_data["full_name"],
-                        "document_type": doc["doc_type"],
-                        "expiry_date": expiry.isoformat() if hasattr(expiry, 'isoformat') else str(expiry),
-                        "days_remaining": (expiry - datetime.now(timezone.utc)).days if hasattr(expiry, '__sub__') else 0
-                    })
-    
+                    expiring.append(
+                        {
+                            "sailor_id": sailor_data["id"],
+                            "sailor_name": sailor_data["full_name"],
+                            "document_type": doc["doc_type"],
+                            "expiry_date": (
+                                expiry.isoformat()
+                                if hasattr(expiry, "isoformat")
+                                else str(expiry)
+                            ),
+                            "days_remaining": (
+                                (expiry - datetime.now(timezone.utc)).days
+                                if hasattr(expiry, "__sub__")
+                                else 0
+                            ),
+                        }
+                    )
+
     return sorted(expiring, key=lambda x: x.get("days_remaining", 999))
+
 
 @app.get("/api/dashboard/upcoming-rotations")
 async def get_upcoming_rotations(authorization: Optional[str] = None):
     get_current_user(authorization)
-    
+
     one_month_from_now = datetime.now(timezone.utc) + timedelta(days=30)
-    
-    contracts = list(db.contracts.find({
-        "status": ContractStatus.ON_BOARD.value,
-        "end_date": {"$lte": one_month_from_now}
-    }))
-    
+
+    contracts = list(
+        db.contracts.find(
+            {
+                "status": ContractStatus.ON_BOARD.value,
+                "end_date": {"$lte": one_month_from_now},
+            }
+        )
+    )
+
     rotations = []
     for contract in contracts:
         contract_data = serialize_doc(contract)
         sailor = db.sailors.find_one({"_id": ObjectId(contract_data["sailor_id"])})
         vacancy = db.vacancies.find_one({"_id": ObjectId(contract_data["vacancy_id"])})
-        
-        rotations.append({
-            "contract_id": contract_data["id"],
-            "sailor_name": sailor["full_name"] if sailor else "Unknown",
-            "vessel_name": vacancy["vessel_name"] if vacancy else "Unknown",
-            "end_date": contract_data["end_date"].isoformat() if hasattr(contract_data["end_date"], 'isoformat') else str(contract_data["end_date"])
-        })
-    
+
+        rotations.append(
+            {
+                "contract_id": contract_data["id"],
+                "sailor_name": sailor["full_name"] if sailor else "Unknown",
+                "vessel_name": vacancy["vessel_name"] if vacancy else "Unknown",
+                "end_date": (
+                    contract_data["end_date"].isoformat()
+                    if hasattr(contract_data["end_date"], "isoformat")
+                    else str(contract_data["end_date"])
+                ),
+            }
+        )
+
     return rotations
+
 
 @app.get("/api/dashboard/recent-sailors")
 async def get_recent_sailors(limit: int = 5, authorization: Optional[str] = None):
@@ -792,14 +1053,17 @@ async def get_recent_sailors(limit: int = 5, authorization: Optional[str] = None
     sailors = list(db.sailors.find().sort("created_at", -1).limit(limit))
     return serialize_docs(sailors)
 
+
 # Send document expiry notifications
 @app.post("/api/notifications/expiring-documents")
-async def send_expiry_notifications(background_tasks: BackgroundTasks, authorization: Optional[str] = None):
+async def send_expiry_notifications(
+    background_tasks: BackgroundTasks, authorization: Optional[str] = None
+):
     get_current_user(authorization)
-    
+
     expiring = await get_expiring_documents(authorization)
     sent_count = 0
-    
+
     for doc in expiring:
         sailor = db.sailors.find_one({"_id": ObjectId(doc["sailor_id"])})
         if sailor and sailor.get("email"):
@@ -812,45 +1076,54 @@ async def send_expiry_notifications(background_tasks: BackgroundTasks, authoriza
             <p>Please renew your document as soon as possible.</p>
             <p>Best regards,<br>MaritimeCRM Team</p>
             """
-            background_tasks.add_task(send_email_notification, sailor["email"], subject, html)
+            background_tasks.add_task(
+                send_email_notification, sailor["email"], subject, html
+            )
             sent_count += 1
-    
+
     return {"message": f"Queued {sent_count} notification emails"}
+
 
 # Indexes endpoint
 @app.post("/api/indexes")
-async def create_indexes(current_user = Depends(get_current_user)):
+async def create_indexes(current_user=Depends(get_current_user)):
     """Create performance indexes for user data"""
     user_id = current_user["id"]
-    
+
     # Sailors
     db.sailors.create_index([("user_id", 1), ("status", 1)])
     db.sailors.create_index([("user_id", 1), ("created_at", -1)])
-    
+
     # Vacancies
     db.vacancies.create_index([("user_id", 1), ("status", 1)])
     db.vacancies.create_index([("user_id", 1), ("start_date", 1)])
-    
+
     # Pipeline
     db.pipeline.create_index([("user_id", 1), ("stage", 1), ("order", 1)])
-    
+
     # Contracts
     db.contracts.create_index([("user_id", 1), ("status", 1)])
     db.contracts.create_index([("user_id", 1), ("end_date", 1)])
-    
+
     # Users (global)
     db.users.create_index("email")
-    
-    return {"message": f"Indexes created for user {user_id}", "collections": ["sailors", "vacancies", "pipeline", "contracts", "companies"]}
+
+    return {
+        "message": f"Indexes created for user {user_id}",
+        "collections": ["sailors", "vacancies", "pipeline", "contracts", "companies"],
+    }
+
 
 # Health check
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": "maritimecrm-api"}
 
+
 # Seed demo data
 @app.post("/api/seed")
 async def seed_demo_data():
+    logger.info("Demo data seeding started")
     # Clear existing data
     db.users.delete_many({})
     db.sailors.delete_many({})
@@ -858,27 +1131,28 @@ async def seed_demo_data():
     db.vacancies.delete_many({})
     db.contracts.delete_many({})
     db.pipeline.delete_many({})
-    
+
     # Create admin user
     admin = {
         "email": "admin@crewcrm.com",
         "password": hash_password("admin123"),
         "full_name": "System Administrator",
         "role": "admin",
-        "created_at": datetime.now(timezone.utc)
+        "created_at": datetime.now(timezone.utc),
     }
-    db.users.insert_one(admin)
-    
+    admin_result = db.users.insert_one(admin)
+    admin_id = str(admin_result.inserted_id)
+
     # Create manager user
     manager = {
         "email": "manager@crewcrm.com",
         "password": hash_password("manager123"),
         "full_name": "Ivan Petrov",
         "role": "manager",
-        "created_at": datetime.now(timezone.utc)
+        "created_at": datetime.now(timezone.utc),
     }
     db.users.insert_one(manager)
-    
+
     # Create companies
     companies = [
         {
@@ -886,40 +1160,99 @@ async def seed_demo_data():
             "flag": "Denmark",
             "country": "Denmark",
             "vessel_types": ["container", "tanker"],
-            "contacts": [{"name": "Hans Jensen", "position": "HR Manager", "email": "hans@maersk.com", "phone": "+45 123 456"}],
-            "salary_scales": [{"position": "Captain", "min_salary": 8000, "max_salary": 12000, "currency": "USD"}],
-            "created_at": datetime.now(timezone.utc)
+            "contacts": [
+                {
+                    "name": "Hans Jensen",
+                    "position": "HR Manager",
+                    "email": "hans@maersk.com",
+                    "phone": "+45 123 456",
+                }
+            ],
+            "salary_scales": [
+                {
+                    "position": "Captain",
+                    "min_salary": 8000,
+                    "max_salary": 12000,
+                    "currency": "USD",
+                }
+            ],
+            "created_at": datetime.now(timezone.utc),
         },
         {
             "name": "MSC",
             "flag": "Switzerland",
             "country": "Switzerland",
             "vessel_types": ["container", "passenger"],
-            "contacts": [{"name": "Maria Rossi", "position": "Recruitment", "email": "maria@msc.com", "phone": "+41 789 012"}],
-            "salary_scales": [{"position": "Chief Engineer", "min_salary": 7000, "max_salary": 11000, "currency": "USD"}],
-            "created_at": datetime.now(timezone.utc)
+            "contacts": [
+                {
+                    "name": "Maria Rossi",
+                    "position": "Recruitment",
+                    "email": "maria@msc.com",
+                    "phone": "+41 789 012",
+                }
+            ],
+            "salary_scales": [
+                {
+                    "position": "Chief Engineer",
+                    "min_salary": 7000,
+                    "max_salary": 11000,
+                    "currency": "USD",
+                }
+            ],
+            "created_at": datetime.now(timezone.utc),
         },
         {
             "name": "Sovcomflot",
             "flag": "Russia",
             "country": "Russia",
             "vessel_types": ["tanker", "bulk_carrier"],
-            "contacts": [{"name": "Alexey Ivanov", "position": "HR Director", "email": "alexey@scf.ru", "phone": "+7 495 123 4567"}],
-            "salary_scales": [{"position": "3rd Engineer", "min_salary": 3500, "max_salary": 5000, "currency": "USD"}],
-            "created_at": datetime.now(timezone.utc)
+            "contacts": [
+                {
+                    "name": "Alexey Ivanov",
+                    "position": "HR Director",
+                    "email": "alexey@scf.ru",
+                    "phone": "+7 495 123 4567",
+                }
+            ],
+            "salary_scales": [
+                {
+                    "position": "3rd Engineer",
+                    "min_salary": 3500,
+                    "max_salary": 5000,
+                    "currency": "USD",
+                }
+            ],
+            "created_at": datetime.now(timezone.utc),
         },
         {
             "name": "Carnival Corporation",
             "flag": "USA",
             "country": "USA",
             "vessel_types": ["passenger"],
-            "contacts": [{"name": "John Smith", "position": "Fleet Manager", "email": "john@carnival.com", "phone": "+1 305 555 0123"}],
-            "salary_scales": [{"position": "Captain", "min_salary": 10000, "max_salary": 15000, "currency": "USD"}],
-            "created_at": datetime.now(timezone.utc)
-        }
+            "contacts": [
+                {
+                    "name": "John Smith",
+                    "position": "Fleet Manager",
+                    "email": "john@carnival.com",
+                    "phone": "+1 305 555 0123",
+                }
+            ],
+            "salary_scales": [
+                {
+                    "position": "Captain",
+                    "min_salary": 10000,
+                    "max_salary": 15000,
+                    "currency": "USD",
+                }
+            ],
+            "created_at": datetime.now(timezone.utc),
+        },
     ]
+    for company in companies:
+        company["user_id"] = admin_id
+        
     company_ids = db.companies.insert_many(companies).inserted_ids
-    
+
     # Create sailors
     now = datetime.now(timezone.utc)
     sailors = [
@@ -937,15 +1270,38 @@ async def seed_demo_data():
             "rating": 5,
             "english_level": "Fluent",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP123456", "issue_date": now - timedelta(days=365*2), "expiry_date": now + timedelta(days=30)},
-                {"doc_type": "STCW", "number": "STCW789", "issue_date": now - timedelta(days=365), "expiry_date": now + timedelta(days=365*2)},
-                {"doc_type": "International Passport", "number": "IP456789", "issue_date": now - timedelta(days=365*3), "expiry_date": now + timedelta(days=60)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP123456",
+                    "issue_date": now - timedelta(days=365 * 2),
+                    "expiry_date": now + timedelta(days=30),
+                },
+                {
+                    "doc_type": "STCW",
+                    "number": "STCW789",
+                    "issue_date": now - timedelta(days=365),
+                    "expiry_date": now + timedelta(days=365 * 2),
+                },
+                {
+                    "doc_type": "International Passport",
+                    "number": "IP456789",
+                    "issue_date": now - timedelta(days=365 * 3),
+                    "expiry_date": now + timedelta(days=60),
+                },
             ],
             "experience": [
-                {"vessel_name": "MSC Oscar", "vessel_type": "container", "flag": "Panama", "company": "MSC", "position": "Captain", "start_date": now - timedelta(days=365), "end_date": now - timedelta(days=30)}
+                {
+                    "vessel_name": "MSC Oscar",
+                    "vessel_type": "container",
+                    "flag": "Panama",
+                    "company": "MSC",
+                    "position": "Captain",
+                    "start_date": now - timedelta(days=365),
+                    "end_date": now - timedelta(days=30),
+                }
             ],
             "notes": "Excellent leadership skills",
-            "created_at": now
+            "created_at": now,
         },
         {
             "full_name": "Александр Викторович Волков",
@@ -960,13 +1316,31 @@ async def seed_demo_data():
             "rating": 4,
             "english_level": "Good",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP234567", "issue_date": now - timedelta(days=365), "expiry_date": now + timedelta(days=365)},
-                {"doc_type": "STCW", "number": "STCW456", "issue_date": now - timedelta(days=180), "expiry_date": now + timedelta(days=365*4)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP234567",
+                    "issue_date": now - timedelta(days=365),
+                    "expiry_date": now + timedelta(days=365),
+                },
+                {
+                    "doc_type": "STCW",
+                    "number": "STCW456",
+                    "issue_date": now - timedelta(days=180),
+                    "expiry_date": now + timedelta(days=365 * 4),
+                },
             ],
             "experience": [
-                {"vessel_name": "Maersk Alabama", "vessel_type": "container", "flag": "USA", "company": "Maersk", "position": "Chief Engineer", "start_date": now - timedelta(days=200), "end_date": now - timedelta(days=50)}
+                {
+                    "vessel_name": "Maersk Alabama",
+                    "vessel_type": "container",
+                    "flag": "USA",
+                    "company": "Maersk",
+                    "position": "Chief Engineer",
+                    "start_date": now - timedelta(days=200),
+                    "end_date": now - timedelta(days=50),
+                }
             ],
-            "created_at": now - timedelta(days=5)
+            "created_at": now - timedelta(days=5),
         },
         {
             "full_name": "Дмитрий Павлович Соколов",
@@ -981,13 +1355,31 @@ async def seed_demo_data():
             "rating": 4,
             "english_level": "Intermediate",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP345678", "issue_date": now - timedelta(days=500), "expiry_date": now + timedelta(days=200)},
-                {"doc_type": "STCW", "number": "STCW123", "issue_date": now - timedelta(days=300), "expiry_date": now + timedelta(days=80)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP345678",
+                    "issue_date": now - timedelta(days=500),
+                    "expiry_date": now + timedelta(days=200),
+                },
+                {
+                    "doc_type": "STCW",
+                    "number": "STCW123",
+                    "issue_date": now - timedelta(days=300),
+                    "expiry_date": now + timedelta(days=80),
+                },
             ],
             "experience": [
-                {"vessel_name": "SCF Ural", "vessel_type": "tanker", "flag": "Russia", "company": "Sovcomflot", "position": "3rd Engineer", "start_date": now - timedelta(days=90), "end_date": None}
+                {
+                    "vessel_name": "SCF Ural",
+                    "vessel_type": "tanker",
+                    "flag": "Russia",
+                    "company": "Sovcomflot",
+                    "position": "3rd Engineer",
+                    "start_date": now - timedelta(days=90),
+                    "end_date": None,
+                }
             ],
-            "created_at": now - timedelta(days=10)
+            "created_at": now - timedelta(days=10),
         },
         {
             "full_name": "Иван Сергеевич Козлов",
@@ -1001,13 +1393,31 @@ async def seed_demo_data():
             "rating": 3,
             "english_level": "Good",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP456789", "issue_date": now - timedelta(days=400), "expiry_date": now + timedelta(days=15)},
-                {"doc_type": "GMDSS", "number": "GMDSS001", "issue_date": now - timedelta(days=200), "expiry_date": now + timedelta(days=365*2)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP456789",
+                    "issue_date": now - timedelta(days=400),
+                    "expiry_date": now + timedelta(days=15),
+                },
+                {
+                    "doc_type": "GMDSS",
+                    "number": "GMDSS001",
+                    "issue_date": now - timedelta(days=200),
+                    "expiry_date": now + timedelta(days=365 * 2),
+                },
             ],
             "experience": [
-                {"vessel_name": "Carnival Dream", "vessel_type": "passenger", "flag": "Panama", "company": "Carnival", "position": "2nd Officer", "start_date": now - timedelta(days=300), "end_date": now - timedelta(days=120)}
+                {
+                    "vessel_name": "Carnival Dream",
+                    "vessel_type": "passenger",
+                    "flag": "Panama",
+                    "company": "Carnival",
+                    "position": "2nd Officer",
+                    "start_date": now - timedelta(days=300),
+                    "end_date": now - timedelta(days=120),
+                }
             ],
-            "created_at": now - timedelta(days=3)
+            "created_at": now - timedelta(days=3),
         },
         {
             "full_name": "Михаил Андреевич Новиков",
@@ -1022,13 +1432,31 @@ async def seed_demo_data():
             "rating": 4,
             "english_level": "Basic",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP567890", "issue_date": now - timedelta(days=250), "expiry_date": now + timedelta(days=365)},
-                {"doc_type": "Basic Safety Training", "number": "BST789", "issue_date": now - timedelta(days=100), "expiry_date": now + timedelta(days=365*4)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP567890",
+                    "issue_date": now - timedelta(days=250),
+                    "expiry_date": now + timedelta(days=365),
+                },
+                {
+                    "doc_type": "Basic Safety Training",
+                    "number": "BST789",
+                    "issue_date": now - timedelta(days=100),
+                    "expiry_date": now + timedelta(days=365 * 4),
+                },
             ],
             "experience": [
-                {"vessel_name": "Baltic Carrier", "vessel_type": "bulk_carrier", "flag": "Liberia", "company": "Baltic Shipping", "position": "Able Seaman", "start_date": now - timedelta(days=180), "end_date": now - timedelta(days=60)}
+                {
+                    "vessel_name": "Baltic Carrier",
+                    "vessel_type": "bulk_carrier",
+                    "flag": "Liberia",
+                    "company": "Baltic Shipping",
+                    "position": "Able Seaman",
+                    "start_date": now - timedelta(days=180),
+                    "end_date": now - timedelta(days=60),
+                }
             ],
-            "created_at": now - timedelta(days=1)
+            "created_at": now - timedelta(days=1),
         },
         {
             "full_name": "Петр Олегович Федоров",
@@ -1042,13 +1470,31 @@ async def seed_demo_data():
             "rating": 5,
             "english_level": "Fluent",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP678901", "issue_date": now - timedelta(days=600), "expiry_date": now + timedelta(days=400)},
-                {"doc_type": "STCW", "number": "STCW999", "issue_date": now - timedelta(days=400), "expiry_date": now + timedelta(days=365*3)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP678901",
+                    "issue_date": now - timedelta(days=600),
+                    "expiry_date": now + timedelta(days=400),
+                },
+                {
+                    "doc_type": "STCW",
+                    "number": "STCW999",
+                    "issue_date": now - timedelta(days=400),
+                    "expiry_date": now + timedelta(days=365 * 3),
+                },
             ],
             "experience": [
-                {"vessel_name": "Ever Given", "vessel_type": "container", "flag": "Panama", "company": "Evergreen", "position": "Chief Officer", "start_date": now - timedelta(days=500), "end_date": now - timedelta(days=200)}
+                {
+                    "vessel_name": "Ever Given",
+                    "vessel_type": "container",
+                    "flag": "Panama",
+                    "company": "Evergreen",
+                    "position": "Chief Officer",
+                    "start_date": now - timedelta(days=500),
+                    "end_date": now - timedelta(days=200),
+                }
             ],
-            "created_at": now - timedelta(days=15)
+            "created_at": now - timedelta(days=15),
         },
         {
             "full_name": "Андрей Юрьевич Смирнов",
@@ -1062,13 +1508,31 @@ async def seed_demo_data():
             "rating": 4,
             "english_level": "Intermediate",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP789012", "issue_date": now - timedelta(days=300), "expiry_date": now + timedelta(days=45)},
-                {"doc_type": "Electrical Certificate", "number": "EC456", "issue_date": now - timedelta(days=150), "expiry_date": now + timedelta(days=365*2)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP789012",
+                    "issue_date": now - timedelta(days=300),
+                    "expiry_date": now + timedelta(days=45),
+                },
+                {
+                    "doc_type": "Electrical Certificate",
+                    "number": "EC456",
+                    "issue_date": now - timedelta(days=150),
+                    "expiry_date": now + timedelta(days=365 * 2),
+                },
             ],
             "experience": [
-                {"vessel_name": "Nordic Tanker", "vessel_type": "tanker", "flag": "Norway", "company": "Nordic Shipping", "position": "Electrician", "start_date": now - timedelta(days=250), "end_date": now - timedelta(days=100)}
+                {
+                    "vessel_name": "Nordic Tanker",
+                    "vessel_type": "tanker",
+                    "flag": "Norway",
+                    "company": "Nordic Shipping",
+                    "position": "Electrician",
+                    "start_date": now - timedelta(days=250),
+                    "end_date": now - timedelta(days=100),
+                }
             ],
-            "created_at": now - timedelta(days=7)
+            "created_at": now - timedelta(days=7),
         },
         {
             "full_name": "Виктор Геннадьевич Попов",
@@ -1082,17 +1546,39 @@ async def seed_demo_data():
             "rating": 4,
             "english_level": "Good",
             "documents": [
-                {"doc_type": "Seaman's Passport", "number": "SP890123", "issue_date": now - timedelta(days=450), "expiry_date": now + timedelta(days=180)},
-                {"doc_type": "STCW", "number": "STCW555", "issue_date": now - timedelta(days=350), "expiry_date": now + timedelta(days=365*2)}
+                {
+                    "doc_type": "Seaman's Passport",
+                    "number": "SP890123",
+                    "issue_date": now - timedelta(days=450),
+                    "expiry_date": now + timedelta(days=180),
+                },
+                {
+                    "doc_type": "STCW",
+                    "number": "STCW555",
+                    "issue_date": now - timedelta(days=350),
+                    "expiry_date": now + timedelta(days=365 * 2),
+                },
             ],
             "experience": [
-                {"vessel_name": "SCF Baikal", "vessel_type": "tanker", "flag": "Russia", "company": "Sovcomflot", "position": "2nd Engineer", "start_date": now - timedelta(days=400), "end_date": now - timedelta(days=180)}
+                {
+                    "vessel_name": "SCF Baikal",
+                    "vessel_type": "tanker",
+                    "flag": "Russia",
+                    "company": "Sovcomflot",
+                    "position": "2nd Engineer",
+                    "start_date": now - timedelta(days=400),
+                    "end_date": now - timedelta(days=180),
+                }
             ],
-            "created_at": now - timedelta(days=12)
-        }
+            "created_at": now - timedelta(days=12),
+        },
     ]
+    for sailor in sailors:
+        sailor["user_id"] = admin_id
+        
     sailor_ids = db.sailors.insert_many(sailors).inserted_ids
     
+
     # Create vacancies
     vacancies = [
         {
@@ -1100,7 +1586,11 @@ async def seed_demo_data():
             "position": "Captain",
             "vessel_name": "Maersk Emerald",
             "vessel_type": "container",
-            "requirements": ["STCW", "5+ years experience", "Container ship experience"],
+            "requirements": [
+                "STCW",
+                "5+ years experience",
+                "Container ship experience",
+            ],
             "min_experience_months": 60,
             "english_required": True,
             "salary_min": 9000,
@@ -1109,7 +1599,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=30),
             "contract_duration_months": 4,
             "status": "open",
-            "created_at": now
+            "created_at": now,
         },
         {
             "company_id": str(company_ids[2]),
@@ -1125,14 +1615,18 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=14),
             "contract_duration_months": 4,
             "status": "open",
-            "created_at": now - timedelta(days=2)
+            "created_at": now - timedelta(days=2),
         },
         {
             "company_id": str(company_ids[1]),
             "position": "Chief Engineer",
             "vessel_name": "MSC Fantasia",
             "vessel_type": "passenger",
-            "requirements": ["STCW", "Passenger ship experience", "Management experience"],
+            "requirements": [
+                "STCW",
+                "Passenger ship experience",
+                "Management experience",
+            ],
             "min_experience_months": 48,
             "english_required": True,
             "salary_min": 8000,
@@ -1141,7 +1635,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=45),
             "contract_duration_months": 6,
             "status": "in_progress",
-            "created_at": now - timedelta(days=5)
+            "created_at": now - timedelta(days=5),
         },
         {
             "company_id": str(company_ids[3]),
@@ -1157,7 +1651,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=21),
             "contract_duration_months": 4,
             "status": "open",
-            "created_at": now - timedelta(days=1)
+            "created_at": now - timedelta(days=1),
         },
         {
             "company_id": str(company_ids[0]),
@@ -1173,7 +1667,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=10),
             "contract_duration_months": 4,
             "status": "open",
-            "created_at": now
+            "created_at": now,
         },
         {
             "company_id": str(company_ids[2]),
@@ -1189,7 +1683,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=60),
             "contract_duration_months": 4,
             "status": "open",
-            "created_at": now - timedelta(days=3)
+            "created_at": now - timedelta(days=3),
         },
         {
             "company_id": str(company_ids[1]),
@@ -1205,7 +1699,7 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=35),
             "contract_duration_months": 5,
             "status": "open",
-            "created_at": now - timedelta(days=4)
+            "created_at": now - timedelta(days=4),
         },
         {
             "company_id": str(company_ids[0]),
@@ -1221,27 +1715,35 @@ async def seed_demo_data():
             "start_date": now + timedelta(days=25),
             "contract_duration_months": 4,
             "status": "closed",
-            "created_at": now - timedelta(days=20)
-        }
+            "created_at": now - timedelta(days=20),
+        },
     ]
+    for vacancy in vacancies:
+        vacancy["user_id"] = admin_id
+    
     vacancy_ids = db.vacancies.insert_many(vacancies).inserted_ids
     
+
     # Create some contracts
     contracts = [
-        {
-            "sailor_id": str(sailor_ids[2]),
-            "vacancy_id": str(vacancy_ids[1]),
-            "sign_date": now - timedelta(days=100),
-            "start_date": now - timedelta(days=90),
-            "end_date": now + timedelta(days=20),
-            "status": "on_board",
-            "salary": 4000,
-            "currency": "USD",
-            "created_at": now - timedelta(days=100)
-        }
+    {
+        "sailor_id": str(sailor_ids[2]),
+        "vacancy_id": str(vacancy_ids[1]),
+        "sign_date": now - timedelta(days=100),
+        "start_date": now - timedelta(days=90),
+        "end_date": now + timedelta(days=20),
+        "status": "on_board",
+        "salary": 4000,
+        "currency": "USD",
+        "created_at": now - timedelta(days=100),
+    }
     ]
+
+    for contract in contracts:
+        contract["user_id"] = admin_id
+
     db.contracts.insert_many(contracts)
-    
+
     # Create pipeline entries
     pipeline = [
         {
@@ -1250,25 +1752,27 @@ async def seed_demo_data():
             "stage": "interview",
             "interview_link": "https://meet.google.com/abc-defg-hij",
             "notes": "Scheduled for tomorrow",
-            "created_at": now - timedelta(days=1)
+            "created_at": now - timedelta(days=1),
         },
         {
             "sailor_id": str(sailor_ids[1]),
             "vacancy_id": str(vacancy_ids[2]),
             "stage": "offer",
             "notes": "Awaiting response",
-            "created_at": now - timedelta(days=3)
+            "created_at": now - timedelta(days=3),
         },
         {
             "sailor_id": str(sailor_ids[3]),
             "vacancy_id": str(vacancy_ids[3]),
             "stage": "contact",
             "notes": "First contact made",
-            "created_at": now
-        }
+            "created_at": now,
+        },
     ]
+    for item in pipeline:
+        item["user_id"] = admin_id
     db.pipeline.insert_many(pipeline)
-    
+    logger.info("Demo data seeding completed")
     return {
         "message": "Demo data seeded successfully",
         "data": {
@@ -1277,15 +1781,16 @@ async def seed_demo_data():
             "companies": len(companies),
             "vacancies": len(vacancies),
             "contracts": len(contracts),
-            "pipeline": len(pipeline)
+            "pipeline": len(pipeline),
         },
         "credentials": {
-            "admin": {"email": "admin@maritimecrm.com", "password": "admin123"},
-            "manager": {"email": "manager@maritimecrm.com", "password": "manager123"}
-        }
+            "admin": {"email": "admin@crewcrm.com", "password": "admin123"},
+            "manager": {"email": "manager@crewcrm.com", "password": "manager123"},
+        },
     }
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
 
+    uvicorn.run(app, host="0.0.0.0", port=8001)
