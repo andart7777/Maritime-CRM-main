@@ -12,11 +12,8 @@ jobs:
   backend-tests:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: backend
-
     env:
+      PYTHONPATH: backend
       MONGO_URL: mongodb://localhost:27017
       DB_NAME: crewcrm_test
       JWT_SECRET: test-secret
@@ -41,10 +38,10 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
 
       - name: Run backend tests
-        run: pytest -q
+        run: python -m pytest backend/tests -q
 
   frontend-build:
     runs-on: ubuntu-latest
