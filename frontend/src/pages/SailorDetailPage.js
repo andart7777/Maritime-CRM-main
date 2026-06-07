@@ -40,6 +40,7 @@ export default function SailorDetailPage() {
 
   useEffect(() => {
     loadSailor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const loadSailor = async () => {

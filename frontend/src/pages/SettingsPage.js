@@ -38,12 +38,9 @@ export default function SettingsPage() {
   const isAdmin = currentUser?.role === 'admin';
 
   useEffect(() => {
-    if (isAdmin) {
-      loadUsers();
-    } else {
-      setLoading(false);
-    }
-  }, [isAdmin]);
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadUsers = async () => {
     try {

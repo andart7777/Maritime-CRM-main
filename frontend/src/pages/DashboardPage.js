@@ -54,15 +54,15 @@ export default function DashboardPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [sendingNotifications, setSendingNotifications] = useState(false);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
       loadDashboardData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, authLoading]);
 
   const loadDashboardData = async () => {
-    if (!isAuthenticated || authLoading || dataLoading) {
+    if (!isAuthenticated || authLoading) {
       return;
     }
 

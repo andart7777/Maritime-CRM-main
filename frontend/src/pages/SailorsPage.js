@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { getSailors, deleteSailor, createSailor } from '../utils/api';
-import { cn, formatDate, getStatusColor } from '../utils/helpers';
+import { cn, getStatusColor } from '../utils/helpers';
 import { toast } from 'sonner';
 
 const statusOptions = [
@@ -33,6 +33,7 @@ export default function SailorsPage() {
 
   useEffect(() => {
     loadSailors();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
   const loadSailors = async () => {

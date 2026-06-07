@@ -246,7 +246,7 @@ export default function LoginPage() {
           <div className="mt-4 p-4 bg-slate-900/50 border border-slate-800/50 rounded-md">
             <p className="text-xs text-slate-500 text-center">
               {language === 'ru' ? 'Демо-доступ:' : 'Demo access:'} <br />
-                <span className="font-mono text-slate-400">admin@maritimecrm.com / admin123</span>
+                <span className="font-mono text-slate-400">admin@crewcrm.com / admin123</span>
             </p>
           </div>
         </div>

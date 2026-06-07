@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
-  FileText,
   Ship,
   User,
   Trash2,
@@ -31,6 +30,7 @@ export default function ContractsPage() {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {

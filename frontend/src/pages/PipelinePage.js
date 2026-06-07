@@ -37,6 +37,7 @@ export default function PipelinePage() {
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVacancy]);
 
   const loadData = async () => {

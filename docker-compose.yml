@@ -1,0 +1,39 @@
+services:
+  mongo:
+    image: mongo:6
+    container_name: crm-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - crm_mongo_data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+    container_name: crm-backend
+    ports:
+      - "8001:8001"
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: crewcrm
+      JWT_SECRET: change-me
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION_HOURS: 24
+      SENDGRID_API_KEY: ""
+      SENDER_EMAIL: ""
+    depends_on:
+      - mongo
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: http://localhost:8001
+    container_name: crm-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  crm_mongo_data:
